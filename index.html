@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medical SLM Fine-Tuning Comparison</title>
+<meta name="description" content="Comparison of small language models fine-tuned on medical reasoning data: training efficiency, evaluation behavior, hardware footprint.">
+<script src="vendor/plotly.min.js" charset="utf-8"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #666666;
+    --line: rgba(128,128,128,.22);
+    --card: rgba(128,128,128,.06);
+    --accent: #2f5bea;
+    --code: rgba(128,128,128,.14);
+    --plot-bg: #ffffff;
+    --plot-grid: rgba(128,128,128,.25);
+    --plot-fg: #1a1a1a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101216;
+      --fg: #e8e8e8;
+      --muted: #a2a2a2;
+      --line: rgba(160,160,160,.25);
+      --card: rgba(160,160,160,.08);
+      --accent: #7c9cff;
+      --code: rgba(160,160,160,.16);
+      --plot-bg: #101216;
+      --plot-grid: rgba(160,160,160,.25);
+      --plot-fg: #e8e8e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1350px; margin: 0 auto; padding: 0 18px 40px; }
+  .hero { padding: 26px 4px 8px; }
+  .hero h1 { font-size: 2.1rem; margin: 0 0 .35rem; line-height: 1.15; }
+  .sub { opacity: .75; font-size: 1rem; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 18px; }
+  .card { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--card); }
+  .k { font-size: .82rem; opacity: .68; margin-bottom: 6px; }
+  .v { font-size: 1.65rem; font-weight: 700; }
+  @media (max-width: 800px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 8px 0 18px; overflow-x: auto; }
+  .tabs button {
+    background: none; border: 0; border-bottom: 2px solid transparent;
+    color: var(--muted); font: inherit; font-weight: 600; padding: 10px 14px;
+    cursor: pointer; white-space: nowrap; margin-bottom: -1px;
+  }
+  .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
+  .panel[hidden] { display: none; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+  .plot { border: 1px solid var(--line); border-radius: 12px; min-height: 380px; overflow: hidden; }
+
+  .note { font-size: .95rem; opacity: .85; padding: 10px 2px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--bg); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  select {
+    font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); min-width: 280px; max-width: 100%;
+  }
+  .detail { margin-top: 18px; max-width: 860px; }
+  .detail h3 { font-size: 1.4rem; margin: 0 0 12px; }
+  .detail p { margin: 0 0 6px; }
+  .detail code { background: var(--code); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+  .detail blockquote { margin: 14px 0 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 8px 8px 0; }
+  .detail a { color: var(--accent); }
+
+  hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0 18px; }
+  .guard h3 { margin: 0 0 8px; font-size: 1.15rem; }
+  .guard ul { margin: 0; padding-left: 20px; }
+  .error { border: 1px solid #d9534f; border-radius: 12px; padding: 16px; color: #d9534f; }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <h1>Medical SLM Fine-Tuning Comparison</h1>
+    <div class="sub">Medical-O1 reasoning adapters · training efficiency · evaluation behavior · hardware footprint</div>
+  </div>
+
+  <div id="cards" class="cards"></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" aria-controls="tab-exec" id="btn-exec">Executive view</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-train" id="btn-train">Training &amp; hardware</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-model" id="btn-model">Model behavior</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-raw" id="btn-raw">Raw comparison data</button>
+  </div>
+
+  <section id="tab-exec" class="panel" role="tabpanel" aria-labelledby="btn-exec">
+    <div class="row">
+      <div id="plot-loss" class="plot"></div>
+      <div id="plot-vram" class="plot"></div>
+    </div>
+    <div class="row">
+      <div id="plot-eff" class="plot"></div>
+      <div id="plot-tok" class="plot"></div>
+    </div>
+    <div class="note">
+      <strong>How to read this page:</strong> evaluation protocols are intentionally kept separate.
+      Loss and token accuracy are directly comparable only when the held-out set and scoring protocol are the same.
+      The Qwen2.5-3B manual 8-question evaluation is therefore shown separately from the 500-example automated evaluations.
+    </div>
+    <div id="plot-manual" class="plot"></div>
+  </section>
+
+  <section id="tab-train" class="panel" role="tabpanel" aria-labelledby="btn-train" hidden>
+    <div id="table-train" class="table-wrap"></div>
+    <div class="note">
+      Use this page to showcase <strong>resource efficiency</strong>: model size, effective batch size, training time,
+      GPU class, and peak allocated VRAM. Missing values are shown as <code>—</code> rather than estimated.
+    </div>
+  </section>
+
+  <section id="tab-model" class="panel" role="tabpanel" aria-labelledby="btn-model" hidden>
+    <label for="model-select">Choose a model</label>
+    <select id="model-select"></select>
+    <div id="detail" class="detail"></div>
+  </section>
+
+  <section id="tab-raw" class="panel" role="tabpanel" aria-labelledby="btn-raw" hidden>
+    <div id="table-raw" class="table-wrap"></div>
+    <div class="note">
+      The dashboard reads <code>data/experiments.json</code>. Add future models there using the same schema and push to the repository;
+      GitHub Pages redeploys automatically. This makes the dashboard extensible without rewriting the visualization code.
+    </div>
+  </section>
+
+  <hr>
+  <div class="guard">
+    <h3>Interpretation guardrails</h3>
+    <ul>
+      <li>This is a <strong>research comparison dashboard</strong>, not a clinical validation tool.</li>
+      <li>A lower evaluation loss indicates better fit to the evaluation distribution, not clinical safety.</li>
+      <li>Token accuracy and manually graded answer correctness measure different behavior.</li>
+      <li>Small manually graded samples should be presented as exploratory evidence, not definitive model ranking.</li>
+    </ul>
+  </div>
+</main>
+
+<script>
+(async function () {
+  // ---------- helpers ----------
+  const isNum = v => typeof v === "number" && Number.isFinite(v);
+  const has = v => v !== null && v !== undefined && v !== "";
+  const fmt = (v, digits = 2, suffix = "") => !has(v) ? "—" : (isNum(v) ? v.toFixed(digits) + suffix : String(v));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  const baseLayout = title => ({
+    title: { text: title, font: { size: 15 } },
+    paper_bgcolor: css("--plot-bg"),
+    plot_bgcolor: css("--plot-bg"),
+    font: { color: css("--plot-fg"), family: "system-ui, sans-serif" },
+    margin: { t: 50, r: 16, b: 60, l: 60 },
+    legend: { orientation: "h", y: -0.22, title: { text: "" } },
+    xaxis: { gridcolor: css("--plot-grid"), automargin: true },
+    yaxis: { gridcolor: css("--plot-grid"), automargin: true },
+    barmode: "group",
+    autosize: true
+  });
+  const config = { responsive: true, displaylogo: false, modeBarButtonsToRemove: ["lasso2d", "select2d"] };
+
+  // ---------- load data ----------
+  let df;
+  try {
+    const res = await fetch("data/experiments.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    df = await res.json();
+  } catch (e) {
+    document.querySelector("main").innerHTML =
+      '<div class="error"><strong>Could not load data/experiments.json</strong> (' + esc(e.message) + ').<br>' +
+      "If you opened this file directly from disk, serve it over HTTP instead, e.g. <code>python -m http.server</code> in the repo folder, then open http://localhost:8000/.</div>";
+    return;
+  }
+
+  // ---------- overview cards ----------
+  (function cards() {
+    const linked = df.filter(r => has(r.hf_repo)).length;
+    const totalTrain = df.reduce((s, r) => s + (isNum(r.train_samples) ? r.train_samples : 0), 0);
+    const drops = df.map(r => r.loss_reduction_pct).filter(isNum);
+    const lossTxt = drops.length ? Math.max(...drops).toFixed(2) + "%" : "—";
+    document.getElementById("cards").innerHTML = [
+      ["Models compared", df.length],
+      ["HF repos linked", linked],
+      ["Training samples", totalTrain.toLocaleString("en-US")],
+      ["Largest eval-loss drop", lossTxt]
+    ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  })();
+
+  // ---------- charts ----------
+  function pairedBar(id, baseKey, adKey, title, yTitle, scale, textFmt) {
+    const d = df.filter(r => isNum(r[baseKey]) && isNum(r[adKey]));
+    if (!d.length) { Plotly.newPlot(id, [], baseLayout(title), config); return; }
+    const x = d.map(r => r.model);
+    const traces = [
+      { name: "Base", x, y: d.map(r => r[baseKey] * scale) },
+      { name: "Fine-tuned", x, y: d.map(r => r[adKey] * scale) }
+    ].map(t => ({ ...t, type: "bar", width: 0.3, text: t.y.map(v => v.toFixed(textFmt)), textposition: "auto" }));
+    const layout = baseLayout(title);
+    layout.yaxis.title = { text: yTitle };
+    Plotly.newPlot(id, traces, layout, config);
+  }
+
+  pairedBar("plot-loss", "base_eval_loss", "adapter_eval_loss",
+    "Base vs Fine-tuned Evaluation Loss", "Evaluation loss", 1, 3);
+  pairedBar("plot-tok", "base_token_accuracy", "adapter_token_accuracy",
+    "Paired Token Accuracy", "Mean token accuracy (%)", 100, 2);
+  pairedBar("plot-manual", "base_manual_accuracy", "adapter_manual_accuracy",
+    "Manual Held-out Correctness (separate protocol)", "Manual correctness (%)", 100, 1);
+
+  (function vram() {
+    const d = df.filter(r => isNum(r.peak_vram_allocated_gb));
+    const layout = baseLayout("Peak Training VRAM (captured runs only)");
+    layout.yaxis.title = { text: "Peak allocated VRAM (GB)" };
+    layout.showlegend = false;
+    Plotly.newPlot("plot-vram", [{
+      type: "bar", width: 0.5, x: d.map(r => r.model), y: d.map(r => r.peak_vram_allocated_gb),
+      text: d.map(r => r.peak_vram_allocated_gb.toFixed(2)), textposition: "auto"
+    }], layout, config);
+  })();
+
+  (function efficiency() {
+    const d = df.filter(r => isNum(r.training_minutes));
+    const samples = d.map(r => isNum(r.train_samples) ? r.train_samples : 0);
+    const maxS = Math.max(...samples, 1);
+    const layout = baseLayout("Training Cost / Scale View");
+    layout.xaxis.title = { text: "Training wall-clock (hours)" };
+    layout.yaxis.title = { text: "Model size (B params)" };
+    layout.showlegend = false;
+    Plotly.newPlot("plot-eff", [{
+      type: "scatter", mode: "markers",
+      x: d.map(r => r.training_minutes / 60),
+      y: d.map(r => r.parameters_b),
+      text: d.map(r => r.model),
+      customdata: d.map(r => [r.gpu, (r.train_samples || 0).toLocaleString("en-US"), r.epochs]),
+      hovertemplate: "<b>%{text}</b><br>hours=%{x:.2f}<br>params=%{y} B<br>gpu=%{customdata[0]}<br>train_samples=%{customdata[1]}<br>epochs=%{customdata[2]}<extra></extra>",
+      marker: { size: samples.map(s => 14 + 30 * s / maxS), sizemode: "diameter", opacity: .85 }
+    }], layout, config);
+  })();
+
+  // ---------- tables ----------
+  function table(id, cols) {
+    const head = cols.map(([, label, num]) => `<th class="${num ? "num" : ""}">${esc(label)}</th>`).join("");
+    const rows = df.map(r => "<tr>" + cols.map(([key, , num, digits]) => {
+      const v = r[key];
+      let cell;
+      if (!has(v)) cell = "—";
+      else if (isNum(v)) cell = digits === undefined ? (Number.isInteger(v) ? v.toLocaleString("en-US") : v.toFixed(4)) : v.toFixed(digits);
+      else cell = esc(v);
+      return `<td class="${num ? "num" : ""}">${cell}</td>`;
+    }).join("") + "</tr>").join("");
+    document.getElementById(id).innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // [key, label, numeric?, fixed digits (optional)]
+  table("table-train", [
+    ["model", "Model"], ["parameters_b", "Params (B)", true, 3], ["method", "Method"],
+    ["train_samples", "Train samples", true], ["epochs", "Epochs", true], ["lora_rank", "LoRA r", true],
+    ["lora_alpha", "LoRA α", true], ["effective_batch", "Effective batch", true], ["max_seq_len", "Max seq", true],
+    ["seed", "Seed", true], ["gpu", "GPU"], ["training_minutes", "Training (min)", true, 2],
+    ["peak_vram_allocated_gb", "Peak VRAM alloc. (GB)", true, 2], ["final_train_loss", "Final train loss", true, 4]
+  ]);
+
+  table("table-raw", [
+    ["model", "model"], ["hf_repo", "hf_repo"], ["base_model", "base_model"], ["train_samples", "train_samples", true],
+    ["eval_samples", "eval_samples", true], ["epochs", "epochs", true], ["gpu", "gpu"],
+    ["peak_vram_allocated_gb", "peak_vram_allocated_gb", true, 2], ["training_minutes", "training_minutes", true, 2],
+    ["final_train_loss", "final_train_loss", true, 4], ["base_eval_loss", "base_eval_loss", true, 4],
+    ["adapter_eval_loss", "adapter_eval_loss", true, 4], ["loss_reduction_pct", "loss_reduction_pct", true, 2],
+    ["base_token_accuracy", "base_token_accuracy", true, 4], ["adapter_token_accuracy", "adapter_token_accuracy", true, 4],
+    ["base_manual_accuracy", "base_manual_accuracy", true, 3], ["adapter_manual_accuracy", "adapter_manual_accuracy", true, 3],
+    ["evaluation_type", "evaluation_type"]
+  ]);
+
+  // ---------- model detail ----------
+  function repoHtml(r) {
+    if (!has(r.hf_repo)) return "Not linked";
+    return `<a href="https://huggingface.co/${esc(r.hf_repo)}" target="_blank" rel="noopener">${esc(r.hf_repo)}</a>`;
+  }
+  function detail(model) {
+    const r = df.find(x => x.model === model);
+    let lossDelta = "—";
+    if (isNum(r.base_eval_loss) && isNum(r.adapter_eval_loss))
+      lossDelta = `${r.base_eval_loss.toFixed(4)} → ${r.adapter_eval_loss.toFixed(4)} (${fmt(r.loss_reduction_pct, 2)}% reduction)`;
+    let tok = "—";
+    if (isNum(r.base_token_accuracy) && isNum(r.adapter_token_accuracy))
+      tok = `${(r.base_token_accuracy * 100).toFixed(2)}% → ${(r.adapter_token_accuracy * 100).toFixed(2)}% (+${fmt(r.token_accuracy_gain_pp, 2)} pp)`;
+    let manual = "—";
+    if (isNum(r.base_manual_accuracy) && isNum(r.adapter_manual_accuracy))
+      manual = `${(r.base_manual_accuracy * 100).toFixed(1)}% → ${(r.adapter_manual_accuracy * 100).toFixed(1)}% (+${fmt(r.manual_accuracy_gain_pp, 1)} pp)`;
+    const L = (k, v) => `<p><strong>${k}:</strong> ${v}</p>`;
+    document.getElementById("detail").innerHTML =
+      `<h3>${esc(r.model)}</h3>` +
+      L("Experiment", esc(r.experiment)) +
+      L("Base model", `<code>${esc(r.base_model)}</code>`) +
+      L("Hub repo", repoHtml(r)) +
+      L("Dataset", `<code>${esc(r.dataset)}</code>`) +
+      L("Method", esc(r.method)) +
+      L("Training", `${(r.train_samples || 0).toLocaleString("en-US")} samples · ${r.epochs} epoch(s) · ${fmt(r.training_minutes)} min`) +
+      L("Hardware", `${esc(r.gpu)} · peak allocated VRAM ${fmt(r.peak_vram_allocated_gb)} GB`) +
+      L("LoRA", `r=${fmt(r.lora_rank, 0)}, α=${fmt(r.lora_alpha, 0)} · effective batch ${fmt(r.effective_batch, 0)} · max seq ${fmt(r.max_seq_len, 0)}`) +
+      L("Final train loss", fmt(r.final_train_loss, 4)) +
+      L("Eval loss", lossDelta) +
+      L("Token accuracy", tok) +
+      L("Manual correctness", manual) +
+      L("Evaluation protocol", esc(r.evaluation_type)) +
+      `<blockquote>${esc(r.notes)}</blockquote>`;
+  }
+  const sel = document.getElementById("model-select");
+  sel.innerHTML = df.map(r => `<option value="${esc(r.model)}">${esc(r.model)}</option>`).join("");
+  sel.addEventListener("change", () => detail(sel.value));
+  detail(df[0].model);
+
+  // ---------- tabs ----------
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  tabs.forEach(btn => btn.addEventListener("click", () => {
+    tabs.forEach(b => {
+      const on = b === btn;
+      b.setAttribute("aria-selected", on);
+      document.getElementById(b.getAttribute("aria-controls")).hidden = !on;
+    });
+    // plots inside a hidden panel have zero size; resize once visible
+    document.querySelectorAll("#" + btn.getAttribute("aria-controls") + " .plot").forEach(p => Plotly.Plots.resize(p));
+  }));
+})();
+</script>
+</body>
+</html>
